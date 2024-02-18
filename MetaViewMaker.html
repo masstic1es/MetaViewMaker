@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meta View XML Maker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <style>
+        #drawingArea {
+            border: 1px solid #000;
+        }
+
+        /* Ensure the main app container fills the available space and can scroll */
+        #appProps,
+        #drawingCol {
+            min-height: 60dvh;
+            max-height: 60dvh;
+            overflow-y: auto;
+        }
+
+        #xmlOutput {
+            min-height: 20dvh;
+            max-height: 20dvh;
+            overflow-y: auto;
+        }
+
+        .console-output {
+            background-color: #f8f9fa;
+            color: #212529;
+            padding: 1rem;
+            border-radius: 0.25rem;
+            min-height: 100px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            border: 1px solid #000;
+        }
+
+        #squareProperties {
+            overflow-y: auto;
+        }
+
+        .expanded-square-props {
+            border: 1px solid #000;
+            border-radius: 5px;
+        }
+
+        .grey-background {
+            background-color: #f0f0f0;
+            border-radius: 5px;
+        }
+    </style>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+</head>
+
+<body class="container">
+
+    <div id="controls" class="container my-3 d-flex">
+        <div class="input-group me-2">
+            <span class="input-group-text">Width:</span>
+            <input type="number" id="canvasWidth" class="form-control" placeholder="Width" min="100" step="10"
+                value="300">
+        </div>
+        <div class="input-group me-2">
+            <span class="input-group-text">Height:</span>
+            <input type="number" id="canvasHeight" class="form-control" placeholder="Height" min="100" step="10"
+                value="200">
+        </div>
+        <div class="input-group me-2">
+            <span class="input-group-text">Title:</span>
+            <input type="text" id="canvasTitle" class="form-control" placeholder="Test View">
+        </div>
+        <div class="btn-group me-2">
+            <button id="resizeCanvas" class="btn btn-primary">Resize</button>
+        </div>
+        <div class="btn-group me-2">
+            <button id="resetCanvas" class="btn btn-secondary">Reset</button>
+        </div>
+    </div>
+
+    <div id="app" class="container flex-grow-1 overflow-auto">
+        <div class="row">
+            <!-- Canvas and Square Properties side by side -->
+            <div class="col-md-6" id="drawingCol">
+                <canvas id="drawingArea" width="300" height="200"></canvas>
+            </div>
+            <div class="col-md-6" id="appProps">
+                <div id="squareProperties" class="overflow-auto"></div>
+            </div>
+        </div>
+        <div class="row">
+            <div class="me-2 col-2">
+                <button id="downloadXML" class="btn btn-primary">Download</button>
+                <!-- File Upload Input -->
+                <button id="importXML" class="btn btn-secondary">Import</button>
+            </div>
+            <!-- XML Output below -->
+            <div id="xmlConsole" class="container mt-3 position-relative">
+                <i class="bi bi-clipboard copy-clipboard-icon"
+                    style="position: absolute; top: 0.5rem; right: 2rem; cursor: pointer;"></i>
+                <div class="row">
+                    <pre id="xmlOutput" class="console-output"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- Import XML Modal -->
+    <dialog id="importXMLModal">
+        <form method="dialog">
+            <h5 class="modal-title">Import XML</h5>
+            <!-- File Upload Input -->
+            <div class="input-group my-2">
+                <input type="file" id="uploadXMLFile" class="form-control" accept=".xml">
+            </div>
+            <div class="modal-body">
+                <textarea id="xmlTextInput" class="form-control" rows="10"
+                    placeholder="Or paste XML here..."></textarea>
+            </div>
+            <div class="modal-footer">
+                <button type="button" value="cancel" class="btn btn-secondary">Close</button>
+                <button type="button" id="parseXMLBtn" class="btn btn-primary">Import</button>
+            </div>
+        </form>
+    </dialog>
+
+    <script>
+
+        const canvas = $('#drawingArea')[0];
+        const ctx = canvas.getContext('2d');
+        let isDrawing = false;
+        let startX, startY;
+        let squares = []; // Array to store squares
+
+        function drawSquare(square) {
+            ctx.beginPath();
+            ctx.rect(square.left, square.top, square.width, square.height);
+            ctx.stroke();
+
+            // Set font style
+            ctx.font = "11px Times New Roman";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+
+            // Calculate the center position
+            const centerX = square.left + square.width / 2;
+            const centerY = square.top + square.height / 2;
+
+            // Use the square's name as the text, or a default placeholder if it's not defined
+            const text = square.text || `Button${squares.indexOf(square) + 1}`;
+
+            // Draw the text at the center of the square
+            ctx.fillText(text, centerX, centerY);
+        }
+
+        function redrawSquares() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear the canvas
+            squares.forEach(drawSquare); // Redraw all squares
+        }
+
+        function getClickedSquare(x, y) {
+            for (let i = squares.length - 1; i >= 0; i--) {
+                const shape = squares[i];
+                if (x >= shape.left && x <= shape.left + shape.width && y >= shape.top && y <= shape.top + shape.height) {
+                    return shape;
+                }
+            }
+            return null; // No square found
+        }
+
+        let draggingSquare = null; // Track the square being dragged
+        let isDragging = false; // Flag to indicate dragging
+
+        $(canvas).on('mousedown', function (e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            const clickedSquare = getClickedSquare(x, y);
+
+            if (clickedSquare) {
+                draggingSquare = clickedSquare;
+                isDragging = true;
+                startX = x - clickedSquare.left;
+                startY = y - clickedSquare.top;
+            } else {
+                startX = x;
+                startY = y;
+                isDrawing = true;
+            }
+        });
+
+        $(canvas).on('mousemove', function (e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            if (isDragging && draggingSquare) {
+                const rect = canvas.getBoundingClientRect();
+                draggingSquare.left = e.clientX - rect.left - startX;
+                draggingSquare.top = e.clientY - rect.top - startY;
+                redrawSquares();
+
+                // Update corresponding inputs for the dragged square
+                const idx = squares.indexOf(draggingSquare);
+                if (idx > -1) {
+                    updateSquarePropertiesInputs(idx, draggingSquare);
+                }
+
+                generateXml(); // Regenerate XML
+            }
+            if (isDragging) {
+                draggingSquare.left = x - startX;
+                draggingSquare.top = y - startY;
+                redrawSquares();
+            } else if (isDrawing) {
+                const width = x - startX;
+                const height = y - startY;
+                redrawSquares();
+                drawSquare({ left: startX, top: startY, width: width, height: height });
+            }
+        });
+
+        $(canvas).on('mouseup', function (e) {
+            if (isDragging) {
+                // End dragging
+                isDragging = false;
+                draggingSquare = null;
+                generateXml(); // Regenerate XML for moved square
+            } else if (isDrawing) {
+                const rect = canvas.getBoundingClientRect();
+                const width = Math.abs(e.clientX - rect.left - startX);
+                const height = Math.abs(e.clientY - rect.top - startY);
+                if (width > 1 && height > 1) { // Use a minimal threshold to avoid creating inputs for single-point clicks
+                    const newSquare = { left: Math.min(startX, e.clientX - rect.left), top: Math.min(startY, e.clientY - rect.top), width: width, height: height };
+                    squares.push(newSquare);
+                    createSquarePropertiesInputs(squares.length - 1, newSquare);
+                    generateXml(); // Regenerate XML
+                }
+                isDrawing = false;
+                redrawSquares();
+            }
+        });
+
+        $(canvas).on('click', function (e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            const clickedSquare = getClickedSquare(x, y);
+
+            if (clickedSquare) {
+                selectedSquareIndex = squares.indexOf(clickedSquare);
+                updateSquarePropertiesInputs(selectedSquareIndex, clickedSquare); // Corrected line
+            }
+        });
+
+        function generateXml() {
+            const canvasWidth = $('#canvasWidth').val();
+            const canvasHeight = $('#canvasHeight').val();
+            let canvasTitle = $('#canvasTitle').val() || 'Test View'; // Default title if empty
+            canvasTitle = escapeXml(canvasTitle); // Escape special characters
+
+            let xml = '<?xml version="1.0"?>\n';
+            xml += `<view width="${canvasWidth}" height="${canvasHeight}" title="${canvasTitle}">\n`;
+            xml += '  <control type="layout">\n';
+
+            $('#squareProperties .square-props').each(function () {
+                const index = $(this).data('square-index');
+                const square = squares[index];
+                let text = $(this).find('.square-text').val().trim() || `Button${index + 1}`;
+                let actionexpr = $(this).find('.square-actionexpr').val().trim();
+                let setstate = $(this).find('.square-setstate').val().trim();
+
+                // Escape special characters in text, actionexpr, and setstate
+                text = escapeXml(text);
+                actionexpr = escapeXml(actionexpr);
+                setstate = escapeXml(setstate);
+
+                xml += `    <control type="button" name="${text}" left="${square.left}" top="${square.top}" width="${square.width}" height="${square.height}" text="${text}"`;
+
+                if (actionexpr) xml += ` actionexpr="${actionexpr}"`;
+                if (setstate) xml += ` setstate="${setstate}"`;
+
+                xml += ' />\n';
+            });
+
+            xml += '  </control>\n</view>';
+            $('#xmlOutput').text(xml);
+        }
+
+
+        function escapeXml(unsafe) {
+            return unsafe.replace(/[<>&'"]/g, function (c) {
+                switch (c) {
+                    case '<': return '&lt;';
+                    case '>': return '&gt;';
+                    case '&': return '&amp;';
+                    case '\'': return '&apos;';
+                    case '"': return '&quot;';
+                    default: return c;
+                }
+            });
+        }
+
+        function sanitizeXmlString(xmlString) {
+            // Replace known problematic characters or sequences
+            return xmlString.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        function preprocessXmlString(xmlText) {
+            // This is a simple example. You might need a more robust solution for encoding attribute values.
+            return xmlText.replace(/"([^"]+)"/g, function (match, p1) {
+                // This encodes special characters in attribute values
+                return '"' + encodeURIComponent(p1) + '"';
+            });
+        }
+
+        function decodeAttributeValue(value) {
+            // Decode the encoded attribute value back to its original form
+            return decodeURIComponent(value);
+        }
+
+        $('#parseXMLBtn').click(function () {
+            let xmlText = $('#xmlTextInput').val();
+            // xmlText = sanitizeXmlString(xmlText); // Sanitize the XML string
+            parseAndDrawXML(xmlText);
+            document.getElementById('importXMLModal').close();
+        });
+        $('#resizeCanvas').click(function () {
+            const newWidth = parseInt($('#canvasWidth').val(), 10);
+            const newHeight = parseInt($('#canvasHeight').val(), 10);
+
+            if (!isNaN(newWidth) && !isNaN(newHeight) && newWidth > 0 && newHeight > 0) {
+                canvas.width = newWidth;
+                canvas.height = newHeight;
+                redrawSquares();
+            } else {
+                alert('Please enter valid dimensions');
+            }
+            generateXml();
+        });
+
+        $('#resetCanvas').click(function () {
+            squares = []; // Clear the squares array
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear the canvas
+            canvas.width = 300;
+            canvas.height = 200;
+            $('#canvasWidth').val('300');
+            $('#canvasHeight').val('200');
+            $('#canvasTitle').val('Test View');
+            // Remove all square property inputs
+            $('#squareProperties').empty();
+
+            // Clear the XML output
+            $('#xmlOutput').text('');
+        });
+        $('#canvasTitle').on('input', function () {
+            generateXml(); // Regenerate XML whenever canvas width, height, or title changes
+        });
+
+        let selectedSquareIndex = null; // Index of the selected square
+
+        function updateSquarePropertiesInputs(index, square) {
+            const $propsDiv = $(`#squareProps-${index}`);
+            if ($propsDiv.length) {
+                $propsDiv.find('.square-width').val(square.width);
+                $propsDiv.find('.square-height').val(square.height);
+                $propsDiv.find('.square-top').val(square.top);
+                $propsDiv.find('.square-left').val(square.left);
+            }
+        }
+
+        function createSquarePropertiesInputs(index, square) {
+            const $inputs = $(`
+                <div id="squareProps-${index}" class="square-props mb-1" data-square-index="${index}">
+                    <!-- First row for Width, Height, Top, Left inputs -->
+                    <div class="d-flex align-items-center g-1 mb-1">
+                        <div class="input-group input-group-sm me-2">
+                            <span class="input-group-text">Width:</span>
+                            <input type="number" class="form-control square-width" placeholder="x" value="${square.width}">
+                        </div>
+                        <div class="input-group input-group-sm me-2">
+                            <span class="input-group-text">Height:</span>
+                            <input type="number" class="form-control square-height" placeholder="y" value="${square.height}">
+                        </div>
+                        <div class="input-group input-group-sm me-2">
+                            <span class="input-group-text">Top:</span>
+                            <input type="number" class="form-control square-top" placeholder="T" value="${square.top}">
+                        </div>
+                        <div class="input-group input-group-sm me-2">
+                            <span class="input-group-text">Left:</span>
+                            <input type="number" class="form-control square-left" placeholder="L" value="${square.left}">
+                        </div>
+                        <div class="form-check form-switch mb-1 me-2">
+                            <input class="form-check-input" type="checkbox" id="moreProps-${index}">
+                        </div>
+                        <div>
+                            <button class="btn btn-danger btn-sm delete-square"><i class="bi bi-trash3-fill"></i></button>
+                        </div>
+                    </div>
+                    <div class="d-flex flex-column">
+                        <div id="additionalProps-${index}" class="additional-props d-none g-1">
+                            <input type="text" class="form-control mb-1 square-text" placeholder="Text" value="${square.text || ''}">
+                            <input type="text" class="form-control mb-1 square-actionexpr" placeholder="Action Expression" value="${square.actionexpr || ''}">
+                            <input type="text" class="form-control square-setstate" placeholder="Set State" value="${square.setstate || ''}">
+                        </div>
+                    </div>
+                </div>
+            `);
+
+            $inputs.find('input').on('input', function () {
+                const idx = $(this).closest('.square-props').data('square-index');
+                const square = squares[idx];
+                square.width = parseInt($inputs.find('.square-width').val(), 10) || square.width;
+                square.height = parseInt($inputs.find('.square-height').val(), 10) || square.height;
+                square.top = parseInt($inputs.find('.square-top').val(), 10) || square.top;
+                square.left = parseInt($inputs.find('.square-left').val(), 10) || square.left;
+                redrawSquares();
+                generateXml(); // Regenerate XML
+            });
+
+            $inputs.find('.delete-square').click(function () {
+                const idx = $(this).closest('.square-props').data('square-index');
+                squares.splice(idx, 1); // Remove the square at the index
+                $(this).closest('.square-props').remove(); // Remove the inputs div
+
+                // Correctly update the data-square-index for remaining inputs
+                $('#squareProperties .square-props').each(function (i) {
+                    $(this).data('square-index', i);
+                    $(this).attr('id', `squareProps-${i}`);
+                });
+
+                redrawSquares();
+
+                // Check if there are no more squares left and clear the XML output if true
+                if ($('#squareProperties .square-props').length === 0) {
+                    $('#xmlOutput').text('');
+                } else {
+                    generateXml(); // Regenerate XML
+                }
+            });
+
+            // Checkbox toggle event
+            $inputs.find(`#moreProps-${index}`).change(function () {
+                const $squareProps = $(`#squareProps-${index}`);
+                const $additionalProps = $(`#additionalProps-${index}`);
+                $additionalProps.toggleClass('d-none'); // Toggle visibility of additional props
+                $squareProps.toggleClass('expanded-square-props'); // Toggle border for the entire div
+                if (!$additionalProps.hasClass('d-none')) {
+                    $additionalProps.addClass('grey-background'); // Add grey background only if additional props are visible
+                } else {
+                    $additionalProps.removeClass('grey-background'); // Remove grey background if additional props are hidden
+                }
+            });
+
+            $inputs.find('.square-text').on('input', function () {
+                const idx = $(this).closest('.square-props').data('square-index');
+                const square = squares[idx];
+                square.text = $(this).val(); // Update the text property of the square
+                redrawSquares(); // Redraw all squares to reflect the updated text
+                generateXml(); // Regenerate XML
+            });
+            $inputs.find('.square-actionexpr, .square-setstate').on('input', function () {
+                const idx = $(this).closest('.square-props').data('square-index');
+                const square = squares[idx];
+                square.actionexpr = $inputs.find('.square-actionexpr').val();
+                square.setstate = $inputs.find('.square-setstate').val();
+                generateXml(); // Regenerate XML with updated attributes
+            });
+            $('#squareProperties').append($inputs);
+        }
+
+        $(document).ready(function () {
+            $('#downloadXML').click(function () {
+                const xmlContent = $('#xmlOutput').text();
+                const blob = new Blob([xmlContent], { type: 'application/xml' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                const title = $('#canvasTitle').val() || 'Test_View';
+
+                a.download = `${title}.xml`;
+                a.href = url;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            });
+
+            $('.copy-clipboard-icon').click(function () {
+                let xmlText = $('#xmlOutput').text();
+                // Remove all linebreaks to make it a single line string
+                xmlText = xmlText.replace(/\r?\n|\r/g, '');
+
+                navigator.clipboard.writeText(xmlText).then(() => {
+                    // Optional: Display a message or change the icon to indicate the copy was successful.
+                    console.log('XML copied to clipboard!');
+                }).catch(err => {
+                    console.error('Error in copying text: ', err);
+                });
+            });
+
+
+            // Trigger modal on 'Import' button click
+            $('#importXML').click(function () {
+                document.getElementById('importXMLModal').showModal();
+            });
+
+            // Close modal on 'Close' button click
+            $('#importXMLModal [value="cancel"]').click(function () {
+                document.getElementById('importXMLModal').close();
+            });
+
+            // Handle file upload
+            $('#uploadXMLFile').change(function (e) {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    const xmlText = e.target.result;
+                    parseAndDrawXML(xmlText);
+                    document.getElementById('importXMLModal').close();
+                };
+                reader.readAsText(file);
+            });
+
+            // Parse XML from textarea and draw
+            $('#parseXMLBtn').click(function () {
+                const xmlText = $('#xmlTextInput').val();
+                parseAndDrawXML(xmlText);
+                document.getElementById('importXMLModal').close();
+            });
+        });
+
+        // Adjust the parseAndDrawXML function to preprocess the XML string
+        function parseAndDrawXML(xmlText) {
+            try {
+                const preprocessedXmlText = preprocessXmlString(xmlText);
+                const parser = new DOMParser();
+                const xmlDoc = parser.parseFromString(preprocessedXmlText, "text/xml");
+
+                squares = [];
+                $('#squareProperties').empty();
+
+                const view = xmlDoc.querySelector('view');
+
+                $('#canvasWidth').val(view.getAttribute('width') || 300);
+                $('#canvasHeight').val(view.getAttribute('height') || 200);
+                $('#canvasTitle').val(decodeAttributeValue(view.getAttribute('title') || 'Test View'));
+                $('#resizeCanvas').click();
+
+                view.querySelectorAll('control[type="button"]').forEach((btn, index) => {
+                    const square = {
+                        left: parseInt(btn.getAttribute('left'), 10),
+                        top: parseInt(btn.getAttribute('top'), 10),
+                        width: parseInt(btn.getAttribute('width'), 10),
+                        height: parseInt(btn.getAttribute('height'), 10),
+                        text: decodeAttributeValue(btn.getAttribute('text')),
+                        actionexpr: decodeAttributeValue(btn.getAttribute('actionexpr') || ''),
+                        setstate: decodeAttributeValue(btn.getAttribute('setstate') || '')
+                    };
+
+                    squares.push(square);
+                    createSquarePropertiesInputs(index, square);
+                });
+
+                redrawSquares();
+                generateXml();
+            } catch (e) {
+                console.error('Error parsing XML: ', e);
+            }
+        }
+        generateXml();
+    </script>
+</body>
+
+</html>
